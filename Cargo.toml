@@ -8,9 +8,9 @@ keywords = ["mpt", "trie", "starknet", "merkle-patricia-trie"]
 categories = ["cryptography", "data-structures", "algorithms"]
 
 [dependencies]
-starknet-types-core = { version = "0.1.0", default-features = false, features = [
+starknet-types-core = { version = "0.3.0", default-features = false, features = [
     "serde",
     "hash",
 ] }
-bitvec = "1.0.1"
-anyhow = "1.0.75"
+bitvec = "1.0"
+anyhow = "1.0"

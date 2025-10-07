@@ -79,10 +79,7 @@ impl EdgeNode {
     /// This is calculated with the edge's height taken into account.
     pub fn common_path(&self, key: &BitSlice<u8, Msb0>) -> &BitSlice<u8, Msb0> {
         let key_path = key.iter().skip(self.height);
-        let common_length = key_path
-            .zip(self.path.iter())
-            .take_while(|(a, b)| a == b)
-            .count();
+        let common_length = key_path.zip(self.path.iter()).take_while(|(a, b)| a == b).count();
 
         &self.path[..common_length]
     }

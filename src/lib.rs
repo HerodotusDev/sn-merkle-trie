@@ -3,12 +3,13 @@ pub mod node;
 pub mod storage;
 pub mod transaction;
 
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
 use anyhow::Context;
 use bitvec::{order::Msb0, slice::BitSlice, vec::BitVec};
 use conversion::from_bits_to_felt;
 use node::{BinaryNode, Direction, EdgeNode, InternalNode, TrieNode};
 use starknet_types_core::{felt::Felt, hash::StarkHash};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use storage::Storage;
 
 /// The result of committing a Merkle tree.
@@ -51,18 +52,10 @@ impl Membership {
 
 #[derive(Clone, Debug)]
 pub enum Node {
-    Binary {
-        left: NodeRef,
-        right: NodeRef,
-    },
-    Edge {
-        child: NodeRef,
-        path: BitVec<u8, Msb0>,
-    },
+    Binary { left: NodeRef, right: NodeRef },
+    Edge { child: NodeRef, path: BitVec<u8, Msb0> },
     LeafBinary,
-    LeafEdge {
-        path: BitVec<u8, Msb0>,
-    },
+    LeafEdge { path: BitVec<u8, Msb0> },
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -93,11 +86,7 @@ impl<H: StarkHash, S: Storage + Default, const HEIGHT: usize> Default for Merkle
 }
 
 impl<H: StarkHash, S: Storage, const HEIGHT: usize> MerkleTree<H, S, HEIGHT> {
-    pub fn get_proof(
-        &self,
-        root_idx: u64,
-        key: BitVec<u8, Msb0>,
-    ) -> anyhow::Result<Option<Vec<TrieNode>>> {
+    pub fn get_proof(&self, root_idx: u64, key: BitVec<u8, Msb0>) -> anyhow::Result<Option<Vec<TrieNode>>> {
         // Manually traverse towards the key.
         let mut nodes = Vec::new();
 
@@ -191,13 +180,7 @@ impl<H: StarkHash, S: Storage, const HEIGHT: usize> MerkleTree<H, S, HEIGHT> {
         Ok(Some(nodes))
     }
 
-    pub fn verify_proof(
-        &self,
-        root: Felt,
-        key: &BitSlice<u8, Msb0>,
-        value: Felt,
-        proofs: &[TrieNode],
-    ) -> Option<Membership> {
+    pub fn verify_proof(&self, root: Felt, key: &BitSlice<u8, Msb0>, value: Felt, proofs: &[TrieNode]) -> Option<Membership> {
         let mut expected_hash = root;
         let mut remaining_path: &BitSlice<u8, Msb0> = key;
 
@@ -227,8 +210,7 @@ impl<H: StarkHash, S: Storage, const HEIGHT: usize> MerkleTree<H, S, HEIGHT> {
                         // If paths don't match, we've found a proof of non membership because
                         // we:
                         // 1. Correctly moved towards the target insofar as is possible, and
-                        // 2. hashing all the nodes along the path does result in the root hash,
-                        //    which means
+                        // 2. hashing all the nodes along the path does result in the root hash, which means
                         // 3. the target definitely does not exist in this tree
                         return Some(Membership::NonMember);
                     }
@@ -271,13 +253,7 @@ impl<H: StarkHash, S: Storage, const HEIGHT: usize> MerkleTree<H, S, HEIGHT> {
                     .context("Fetching root node's hash")?
                     .context("Root node's hash is missing")?,
                 other => {
-                    let (root_hash, _) = self.commit_subtree(
-                        other,
-                        &mut added,
-                        &mut removed,
-                        &self.storage,
-                        BitVec::new(),
-                    )?;
+                    let (root_hash, _) = self.commit_subtree(other, &mut added, &mut removed, &self.storage, BitVec::new())?;
                     root_hash
                 }
             }
@@ -366,22 +342,10 @@ impl<H: StarkHash, S: Storage, const HEIGHT: usize> MerkleTree<H, S, HEIGHT> {
             InternalNode::Binary(binary) => {
                 let mut left_path = path.clone();
                 left_path.push(Direction::Left.into());
-                let (left_hash, left_child) = self.commit_subtree(
-                    &mut binary.left.borrow_mut(),
-                    added,
-                    removed,
-                    storage,
-                    left_path,
-                )?;
+                let (left_hash, left_child) = self.commit_subtree(&mut binary.left.borrow_mut(), added, removed, storage, left_path)?;
                 let mut right_path = path.clone();
                 right_path.push(Direction::Right.into());
-                let (right_hash, right_child) = self.commit_subtree(
-                    &mut binary.right.borrow_mut(),
-                    added,
-                    removed,
-                    storage,
-                    right_path,
-                )?;
+                let (right_hash, right_child) = self.commit_subtree(&mut binary.right.borrow_mut(), added, removed, storage, right_path)?;
                 let hash = BinaryNode::calculate_hash::<H>(left_hash, right_hash);
 
                 let persisted_node = match (left_child, right_child) {
@@ -406,20 +370,12 @@ impl<H: StarkHash, S: Storage, const HEIGHT: usize> MerkleTree<H, S, HEIGHT> {
             }
             InternalNode::Edge(edge) => {
                 path.extend_from_bitslice(&edge.path);
-                let (child_hash, child) = self.commit_subtree(
-                    &mut edge.child.borrow_mut(),
-                    added,
-                    removed,
-                    storage,
-                    path,
-                )?;
+                let (child_hash, child) = self.commit_subtree(&mut edge.child.borrow_mut(), added, removed, storage, path)?;
 
                 let hash = EdgeNode::calculate_hash::<H>(child_hash, &edge.path);
 
                 let persisted_node = match child {
-                    None => Node::LeafEdge {
-                        path: edge.path.clone(),
-                    },
+                    None => Node::LeafEdge { path: edge.path.clone() },
                     Some(child) => Node::Edge {
                         child,
                         path: edge.path.clone(),
@@ -472,12 +428,10 @@ impl<H: StarkHash, S: Storage, const HEIGHT: usize> MerkleTree<H, S, HEIGHT> {
         //
         // 1. The leaf exists, in which case we simply change its value.
         //
-        // 2. The tree is empty, we insert the new leaf and the root becomes an edge
-        //    node connecting to it.
+        // 2. The tree is empty, we insert the new leaf and the root becomes an edge node connecting to it.
         //
-        // 3. The leaf does not exist, and the tree is not empty. The final node in the
-        //    traversal will be an edge node who's path diverges from our new leaf
-        //    node's.
+        // 3. The leaf does not exist, and the tree is not empty. The final node in the traversal will be an edge node who's path diverges
+        //    from our new leaf node's.
         //
         //    This edge must be split into a new subtree containing both the existing
         // edge's child and the    new leaf. This requires an edge followed by a
@@ -683,13 +637,7 @@ mod tests {
         // The edge node path should match the key, and the leaf node the value.
         let expected_path = key.clone();
 
-        let edge = tree
-            .root
-            .unwrap()
-            .borrow()
-            .as_edge()
-            .cloned()
-            .expect("root should be an edge");
+        let edge = tree.root.unwrap().borrow().as_edge().cloned().expect("root should be an edge");
         assert_eq!(edge.path, expected_path);
         assert_eq!(edge.height, 0);
 
@@ -701,17 +649,12 @@ mod tests {
     fn committing_an_unmodified_tree_should_result_in_empty_update() {
         let mut tree: MerkleTree<Pedersen, InMemoryStorage, 64> = Default::default();
 
-        tree.set(
-            from_felt_to_bits(&Felt::from_hex_unchecked("0x1")),
-            Felt::from_hex_unchecked("0x1"),
-        )
-        .unwrap();
+        tree.set(from_felt_to_bits(&Felt::from_hex_unchecked("0x1")), Felt::from_hex_unchecked("0x1"))
+            .unwrap();
         let root = tree.commit().unwrap();
         assert_eq!(
             root.0,
-            Felt::from_hex_unchecked(
-                "0x02ebbd6878f81e49560ae863bd4ef327a417037bf57b63a016130ad0a94c8fa7"
-            )
+            Felt::from_hex_unchecked("0x02ebbd6878f81e49560ae863bd4ef327a417037bf57b63a016130ad0a94c8fa7")
         );
         assert_eq!(tree.storage.nodes.len(), 1);
     }
@@ -726,37 +669,22 @@ mod tests {
         // The bug was identified by comparing root and nodes against the python
         // utility in `root/py/src/test_generate_test_storage_tree.py`.
         let leaves = [
+            (Felt::from_hex_unchecked("0x5"), Felt::from_hex_unchecked("0x66")),
             (
-                Felt::from_hex_unchecked("0x5"),
-                Felt::from_hex_unchecked("0x66"),
-            ),
-            (
-                Felt::from_hex_unchecked(
-                    "0x1BF95D4B58F0741FEA29F94EE5A118D0847C8B7AE0173C2A570C9F74CCA9EA1",
-                ),
+                Felt::from_hex_unchecked("0x1BF95D4B58F0741FEA29F94EE5A118D0847C8B7AE0173C2A570C9F74CCA9EA1"),
                 Felt::from_hex_unchecked("0x7E5"),
             ),
             (
-                Felt::from_hex_unchecked(
-                    "0x3C75C20765D020B0EC41B48BB8C5338AC4B619FC950D59994E844E1E1B9D2A9",
-                ),
+                Felt::from_hex_unchecked("0x3C75C20765D020B0EC41B48BB8C5338AC4B619FC950D59994E844E1E1B9D2A9"),
                 Felt::from_hex_unchecked("0x7C7"),
             ),
             (
-                Felt::from_hex_unchecked(
-                    "0x4065B936C56F5908A981084DAFA66DC17600937DC80C52EEB834693BB811792",
-                ),
-                Felt::from_hex_unchecked(
-                    "0x7970C532B764BB36FAF5696B8BC1317505B8A4DC9EEE5DF4994671757975E4D",
-                ),
+                Felt::from_hex_unchecked("0x4065B936C56F5908A981084DAFA66DC17600937DC80C52EEB834693BB811792"),
+                Felt::from_hex_unchecked("0x7970C532B764BB36FAF5696B8BC1317505B8A4DC9EEE5DF4994671757975E4D"),
             ),
             (
-                Felt::from_hex_unchecked(
-                    "0x4B5FBB4904167E2E8195C35F7D4E78501A3FE95896794367C85B60B39AEFFC2",
-                ),
-                Felt::from_hex_unchecked(
-                    "0x232C969EAFC5B30C20648759D7FA1E2F4256AC6604E1921578101DCE4DFDF48",
-                ),
+                Felt::from_hex_unchecked("0x4B5FBB4904167E2E8195C35F7D4E78501A3FE95896794367C85B60B39AEFFC2"),
+                Felt::from_hex_unchecked("0x232C969EAFC5B30C20648759D7FA1E2F4256AC6604E1921578101DCE4DFDF48"),
             ),
         ];
 
@@ -771,9 +699,7 @@ mod tests {
 
         let root = tree.commit().unwrap().0;
 
-        let expected = Felt::from_hex_unchecked(
-            "0x6ee9a8202b40f3f76f1a132f953faa2df78b3b33ccb2b4406431abdc99c2dfe",
-        );
+        let expected = Felt::from_hex_unchecked("0x6ee9a8202b40f3f76f1a132f953faa2df78b3b33ccb2b4406431abdc99c2dfe");
 
         assert_eq!(root, expected);
     }

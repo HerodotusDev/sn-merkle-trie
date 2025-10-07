@@ -32,24 +32,14 @@ impl TransactionMerkleTree {
         }
     }
 
-    pub fn get_proof(
-        &self,
-        root_idx: u64,
-        key: BitVec<u8, Msb0>,
-    ) -> anyhow::Result<Option<Vec<TrieNode>>> {
+    pub fn get_proof(&self, root_idx: u64, key: BitVec<u8, Msb0>) -> anyhow::Result<Option<Vec<TrieNode>>> {
         match self {
             TransactionMerkleTree::Pedersen(tree) => tree.get_proof(root_idx, key),
             TransactionMerkleTree::Poseidon(tree) => tree.get_proof(root_idx, key),
         }
     }
 
-    pub fn verify_proof(
-        &self,
-        root: Felt,
-        key: &BitVec<u8, Msb0>,
-        value: Felt,
-        proof: &[TrieNode],
-    ) -> Option<Membership> {
+    pub fn verify_proof(&self, root: Felt, key: &BitVec<u8, Msb0>, value: Felt, proof: &[TrieNode]) -> Option<Membership> {
         match self {
             TransactionMerkleTree::Pedersen(tree) => tree.verify_proof(root, key, value, proof),
             TransactionMerkleTree::Poseidon(tree) => tree.verify_proof(root, key, value, proof),
@@ -59,11 +49,11 @@ impl TransactionMerkleTree {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::Membership;
-    use crate::{conversion::from_felt_to_bits, MerkleTree};
     use bitvec::view::BitView;
     use starknet_types_core::felt::Felt;
+
+    use super::*;
+    use crate::{conversion::from_felt_to_bits, Membership, MerkleTree};
 
     #[test]
     fn test_tx_commitment_merkle_tree() {
@@ -89,9 +79,7 @@ mod tests {
 
         assert_eq!(
             root,
-            Felt::from_hex_unchecked(
-                "0x1a0e579b6b444769e4626331230b5ae39bd880f47e703b73fa56bf77e52e461"
-            )
+            Felt::from_hex_unchecked("0x1a0e579b6b444769e4626331230b5ae39bd880f47e703b73fa56bf77e52e461")
         );
 
         // seems proof is share able with key 1 and key 2 huh

@@ -1,10 +1,10 @@
-use bitvec::{order::Msb0, slice::BitSlice};
-use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
 
-use crate::{conversion::from_bits_to_felt, StoredNode};
+use bitvec::{order::Msb0, slice::BitSlice};
+use starknet_types_core::felt::Felt;
 
 use super::Storage;
+use crate::{conversion::from_bits_to_felt, StoredNode};
 
 /// In-memory implementation of the `Storage` trait for storing and retrieving nodes and leaves.
 /// This struct uses HashMaps to store nodes and leaves, providing methods to access, insert, and
